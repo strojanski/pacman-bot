@@ -219,6 +219,21 @@ class BaseAgent(CaptureAgent):
 
 class OffensiveReflexAgent(BaseAgent):
     
+    def __init__(self, index, time=.1):
+        super().__init__(index, time)
+        self.probability_to_return = 0
+    
+    def n_food_eaten(self, successor):
+        '''
+            Returns the amount of food that an agent (pacman) is currently carrying
+        '''
+        start_food = 20 #self.get_food(self.register_initial_state(successor)) #20
+        score = successor.get_score();
+        food_left = len(self.get_food(successor).as_list())
+        n_food_eaten = start_food - score - food_left
+        return n_food_eaten        
+        
+    
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
@@ -239,14 +254,61 @@ class OffensiveReflexAgent(BaseAgent):
             opponent_distances = successor.get_agent_distances()      
             closest_opponent = min([opponent_distances[i] for i in self.enemy_indices])
             print(closest_opponent)
-            features["distance_to_opponent"] = closest_opponent # * stevilo_pozrte_hrane
+            try:
+                features["distance_to_opponent"] = 1/closest_opponent # * stevilo_pozrte_hrane
+            except ZeroDivisionError:
+                features["distance_to_opponent"] = 0
         
+        carried_food = self.n_food_eaten(successor)
+        features["food_eaten"] = carried_food
         return features
 
 
     def get_weights(self, game_state, action):
-        return {'successor_score': 100, 'distance_to_food': -1, "distance_to_opponent": 1}
+        return {'successor_score': 100, 'distance_to_food': -1, "distance_to_opponent": 10, "food_eaten": 100}
+
+
+    def choose_action(self, game_state):
+        """
+        Picks among the actions with the highest Q(s,a).
+        """
+        if self.n_food_eaten(game_state) == 0:
+            self.probability_to_return = 0
         
+        actions = game_state.get_legal_actions(self.index)
+
+        # You can profile your evaluation time by uncommenting these lines
+        #start = time.time()
+        values = [self.evaluate(game_state, a) for a in actions]
+        #print ('eval time for agent %d: %.4f' % (self.index, time.time() - start))
+
+        features = self.get_features(game_state, "Stop");
+        if features["food_eaten"] > 0:
+            self.probability_to_return = .2 * features["food_eaten"]
+        self.probability_to_return = min(self.probability_to_return, 1)
+
+        print(self.probability_to_return)
+    
+        max_value = max(values)
+        best_actions = [a for a, v in zip(actions, values) if v == max_value]
+
+        food_left = len(self.get_food(game_state).as_list())
+
+        if food_left <= 2 or self.probability_to_return == 1 or random.choices([True, False], weights=[self.probability_to_return, 1-self.probability_to_return]) == True:
+            print("returning")
+            best_dist = 9999
+            best_action = None
+            for action in actions:
+                successor = self.get_successor(game_state, action)
+                pos2 = successor.get_agent_position(self.index)
+                dist = self.get_maze_distance(self.start, pos2)
+                if dist < best_dist:
+                    best_action = action
+                    best_dist = dist
+            return best_action
+
+        return random.choice(best_actions)
+    
 class DefensiveReflexAgent(BaseAgent):
     def get_features(self, game_state, action):
         features = util.Counter()
