@@ -55,6 +55,8 @@ def create_team(first_index, second_index, is_red,
 # Agents #
 ##########
 
+CAPSULE_EFFECT_DURATION = 40
+
 class ReflexCaptureAgent(CaptureAgent):
     """
     A base class for reflex agents that choose score-maximizing actions
@@ -215,24 +217,31 @@ class BaseAgent(CaptureAgent):
         """
         return {'successor_score': 1.0}
 
-    
+    def is_on_opponent_field(self, game_state):
+        pos = game_state.get_agent_position(self.index)
+        width = (game_state.get_red_food().width)
+        if self.is_red and pos[0] >= width/2 or not self.is_red and pos[0] <= width/2:
+            return True
+        return False
 
 class OffensiveReflexAgent(BaseAgent):
     
     def __init__(self, index, time=.1):
         super().__init__(index, time)
         self.probability_to_return = 0
+        self.returning = False
+        self.capsuleEffect = False
+        self.capsuleEffectDuration = CAPSULE_EFFECT_DURATION
     
     def n_food_eaten(self, successor):
         '''
             Returns the amount of food that an agent (pacman) is currently carrying
         '''
-        start_food = 20 #self.get_food(self.register_initial_state(successor)) #20
-        score = successor.get_score();
+        start_food = 20 
+        score = successor.get_score() #+ 20  TODO - self.opponent_score();
         food_left = len(self.get_food(successor).as_list())
         n_food_eaten = start_food - score - food_left
         return n_food_eaten        
-        
     
     def get_features(self, game_state, action):
         features = util.Counter()
@@ -250,14 +259,32 @@ class OffensiveReflexAgent(BaseAgent):
         pos = successor.get_agent_position(self.index)
         width = (successor.get_red_food().width)
         if self.is_red and pos[0] >= width/2 or not self.is_red and pos[0] <= width/2:
-        # Get distance to nearest opponent
-            opponent_distances = successor.get_agent_distances()      
-            closest_opponent = min([opponent_distances[i] for i in self.enemy_indices])
-            print(closest_opponent)
-            try:
-                features["distance_to_opponent"] = 1/closest_opponent # * stevilo_pozrte_hrane
-            except ZeroDivisionError:
-                features["distance_to_opponent"] = 0
+            # Get distance to nearest opponent
+            enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
+            alternative = False
+            if len(enemies) > 0:
+                try:
+                    closest_opponent = min([self.get_maze_distance(pos, enemy) for enemy in enemies if enemy.get_position() is not None])
+                    features["distance_to_opponent"] = closest_opponent # * stevilo_pozrte_hrane
+                except BaseException:
+                    alternative = True
+            if alternative == True:
+                opponent_distances = successor.get_agent_distances()      
+                closest_opponent = min([opponent_distances[i] for i in self.enemy_indices])
+                try:
+                    features["distance_to_opponent"] = 1/closest_opponent # * stevilo_pozrte_hrane
+                except ZeroDivisionError:
+                    features["distance_to_opponent"] = 0
+        else:
+            features["distance_to_opponent"] = 1/100
+            
+        # Also minimize distance to capsule
+        capsule_positions = successor.get_blue_capsules()
+        if len(capsule_positions) > 0:
+            features["distance_to_capsule"] = min([self.get_maze_distance(pos, capsule_pos) for capsule_pos in capsule_positions])
+        else:
+            features["distance_to_capsule"] = 0
+        
         
         carried_food = self.n_food_eaten(successor)
         features["food_eaten"] = carried_food
@@ -265,48 +292,125 @@ class OffensiveReflexAgent(BaseAgent):
 
 
     def get_weights(self, game_state, action):
-        return {'successor_score': 100, 'distance_to_food': -1, "distance_to_opponent": 10, "food_eaten": 100}
+        if self.is_on_opponent_field(game_state):
+            distance_to_opponent_weight = 10
+        else:
+            distance_to_opponent_weight = -10
 
+        if self.capsuleEffect:
+            distance_to_opponent_weight = -100
+        
+        return {'successor_score': 100, 'distance_to_food': -1, "distance_to_opponent": distance_to_opponent_weight, "food_eaten": 100, "distance_to_capsule": -1}
+
+
+    def set_capsule_effect(self, game_state):
+        position = game_state.get_agent_position(self.index)
+        if any(capsule_pos == position for capsule_pos in game_state.get_blue_capsules()):
+            self.capsuleEffect = True
+            
+    def track_capsule_effect(self):
+        if self.capsuleEffectDuration > 0:
+            self.capsuleEffectDuration -= 1
+        else:
+            self.capsuleEffectDuration = 0
+            self.capsuleEffect = False
+            
+    def dist_from_ghost(self, game_state):
+        pos = game_state.get_agent_position(self.index)
+        
+        # Computes distance to invaders we can see
+        enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
+        chasers = [a for a in enemies if a.is_pacman == False and a.get_position() is not None]
+        if len(chasers) > 0:
+            dists = [self.get_maze_distance(pos, a.get_position()) for a in chasers]
+            return min(dists)
+        else:
+            opponent_distances = game_state.get_agent_distances()      
+            return min([opponent_distances[i] for i in self.enemy_indices])
+
+    def run_from_ghost(self, actions, game_state):
+        '''
+        Makes pacman return as safe as possible
+        '''
+        
+        best_dist = 9999
+        current_dist_from_ghost = self.dist_from_ghost(game_state)
+        best_action = None
+        for action in actions:
+            successor = self.get_successor(game_state, action)
+            pos2 = successor.get_agent_position(self.index)
+            dist = self.get_maze_distance(self.start, pos2)
+            
+            dist_from_ghost = self.dist_from_ghost(successor)
+            print(current_dist_from_ghost, dist_from_ghost)
+            
+            # Run home and away from
+            if dist < best_dist and dist_from_ghost >= current_dist_from_ghost:
+                best_action = action
+                best_dist = dist
+            elif dist < best_dist:
+                best_action = action
+                best_dist = dist
+                
+        return best_action
+
+    def get_probability_to_return(self, features):
+        increment_per_food = .3
+        if self.capsuleEffect:
+            increment_per_food = .1
+        
+        probability_to_return = 0
+        if features["food_eaten"] > 0:
+            probability_to_return = increment_per_food * features["food_eaten"]
+        if features["distance_to_opponent"] >= 1/5:
+            probability_to_return += .2
+        probability_to_return = min(probability_to_return, 1)
+        return probability_to_return
 
     def choose_action(self, game_state):
         """
         Picks among the actions with the highest Q(s,a).
         """
-        if self.n_food_eaten(game_state) == 0:
-            self.probability_to_return = 0
         
+        self.set_capsule_effect(game_state)
+        if self.capsuleEffect:
+            self.track_capsule_effect()
         actions = game_state.get_legal_actions(self.index)
+        
+        # Get features
+        features = self.get_features(game_state, "Stop");
+        #print(features)
+        
+        # If pacman has not eaten, is more than 5 fields from opponent or ate the capsule, it should not run
+        if self.n_food_eaten(game_state) == 0  or self.capsuleEffect == True or self.is_on_opponent_field(game_state) == False:
+            self.probability_to_return = 0
+            self.returning = False
+            
 
         # You can profile your evaluation time by uncommenting these lines
         #start = time.time()
         values = [self.evaluate(game_state, a) for a in actions]
         #print ('eval time for agent %d: %.4f' % (self.index, time.time() - start))
 
-        features = self.get_features(game_state, "Stop");
-        if features["food_eaten"] > 0:
-            self.probability_to_return = .2 * features["food_eaten"]
-        self.probability_to_return = min(self.probability_to_return, 1)
 
-        print(self.probability_to_return)
-    
+        self.probability_to_return = self.get_probability_to_return(features)
+        #print(self.probability_to_return, self.returning)    
+     
         max_value = max(values)
         best_actions = [a for a, v in zip(actions, values) if v == max_value]
 
         food_left = len(self.get_food(game_state).as_list())
+        
+        # Only make this decision if we aren't already returning
+        if self.returning == False:
+            self.returning = random.choices([True, False], weights=[self.probability_to_return, 1-self.probability_to_return])
 
-        if food_left <= 2 or self.probability_to_return == 1 or random.choices([True, False], weights=[self.probability_to_return, 1-self.probability_to_return]) == True:
+        # TODO - take opponent position in account
+        if food_left <= 2 or self.probability_to_return == 1 or self.returning == True: 
             print("returning")
-            best_dist = 9999
-            best_action = None
-            for action in actions:
-                successor = self.get_successor(game_state, action)
-                pos2 = successor.get_agent_position(self.index)
-                dist = self.get_maze_distance(self.start, pos2)
-                if dist < best_dist:
-                    best_action = action
-                    best_dist = dist
-            return best_action
-
+            self.returning = True
+            return self.run_from_ghost(actions, game_state)
+            
         return random.choice(best_actions)
     
 class DefensiveReflexAgent(BaseAgent):
@@ -325,9 +429,15 @@ class DefensiveReflexAgent(BaseAgent):
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
         features['num_invaders'] = len(invaders)
+        trespassers = [enemy for enemy in enemies if self.is_on_opponent_field(game_state)]
         if len(invaders) > 0:
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
             features['invader_distance'] = min(dists)
+        else:
+            opponent_distances = successor.get_agent_distances()      
+            features["invader_distance"] = min([opponent_distances[i] for i in self.enemy_indices])
+
+        #print(features["invader_distance"])
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
