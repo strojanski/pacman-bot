@@ -240,8 +240,8 @@ class OffensiveReflexAgent(BaseAgent):
         '''
         start_food = 20 
         score = successor.get_score() #+ 20  TODO - self.opponent_score();
-        if not self.is_red:
-            score *= -1
+        #if not self.is_red:
+        #    score *= -1
         food_left = len(self.get_food(successor).as_list())
         n_food_eaten = start_food - score - food_left
         return n_food_eaten        
