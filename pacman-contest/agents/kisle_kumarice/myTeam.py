@@ -220,7 +220,7 @@ class BaseAgent(CaptureAgent):
     def is_on_opponent_field(self, game_state):
         pos = game_state.get_agent_position(self.index)
         width = (game_state.get_red_food().width)
-        if self.is_red and pos[0] >= width/2 or not self.is_red and pos[0] <= width/2:
+        if self.is_red and pos[0] >= width/2 or self.is_red == False and pos[0] <= width/2:
             return True
         return False
 
@@ -232,6 +232,7 @@ class OffensiveReflexAgent(BaseAgent):
         self.returning = False
         self.capsuleEffect = False
         self.capsuleEffectDuration = CAPSULE_EFFECT_DURATION
+        self.capsule_positions = []
     
     def n_food_eaten(self, successor):
         '''
@@ -239,6 +240,8 @@ class OffensiveReflexAgent(BaseAgent):
         '''
         start_food = 20 
         score = successor.get_score() #+ 20  TODO - self.opponent_score();
+        if not self.is_red:
+            score *= -1
         food_left = len(self.get_food(successor).as_list())
         n_food_eaten = start_food - score - food_left
         return n_food_eaten        
@@ -279,7 +282,7 @@ class OffensiveReflexAgent(BaseAgent):
             features["distance_to_opponent"] = 1/100
             
         # Also minimize distance to capsule
-        capsule_positions = successor.get_blue_capsules()
+        capsule_positions = self.get_capsules(successor)
         if len(capsule_positions) > 0:
             features["distance_to_capsule"] = min([self.get_maze_distance(pos, capsule_pos) for capsule_pos in capsule_positions])
         else:
@@ -303,19 +306,24 @@ class OffensiveReflexAgent(BaseAgent):
         return {'successor_score': 100, 'distance_to_food': -1, "distance_to_opponent": distance_to_opponent_weight, "food_eaten": 100, "distance_to_capsule": -1}
 
 
-    def set_capsule_effect(self, game_state):
-        position = game_state.get_agent_position(self.index)
-        if any(capsule_pos == position for capsule_pos in game_state.get_blue_capsules()):
+    def set_capsule_effect(self, successor):
+        position = successor.get_agent_position(self.index)
+        if any(capsule_pos == position for capsule_pos in self.get_capsules(successor)):
             self.capsuleEffect = True
+            print("Ate capsule")
             
     def track_capsule_effect(self):
         if self.capsuleEffectDuration > 0:
             self.capsuleEffectDuration -= 1
+            self.capsuleEffect = True
         else:
             self.capsuleEffectDuration = 0
             self.capsuleEffect = False
             
     def dist_from_ghost(self, game_state):
+        '''
+            Returns distance from nearest ghost
+        '''
         pos = game_state.get_agent_position(self.index)
         
         # Computes distance to invaders we can see
@@ -342,8 +350,7 @@ class OffensiveReflexAgent(BaseAgent):
             dist = self.get_maze_distance(self.start, pos2)
             
             dist_from_ghost = self.dist_from_ghost(successor)
-            print(current_dist_from_ghost, dist_from_ghost)
-            
+                        
             # Run home and away from
             if dist < best_dist and dist_from_ghost >= current_dist_from_ghost:
                 best_action = action
@@ -355,9 +362,10 @@ class OffensiveReflexAgent(BaseAgent):
         return best_action
 
     def get_probability_to_return(self, features):
-        increment_per_food = .3
+        increment_per_food = .25
         if self.capsuleEffect:
             increment_per_food = .1
+            self.returning = False
         
         probability_to_return = 0
         if features["food_eaten"] > 0:
@@ -367,19 +375,31 @@ class OffensiveReflexAgent(BaseAgent):
         probability_to_return = min(probability_to_return, 1)
         return probability_to_return
 
+    def get_capsules(self, game_state):
+        if self.is_red:
+            return game_state.get_blue_capsules()
+        else:
+            return game_state.get_red_capsules()
+            
+
     def choose_action(self, game_state):
         """
         Picks among the actions with the highest Q(s,a).
         """
+        if len(self.capsule_positions) == 0:
+            self.capsule_positions = self.get_capsules(game_state)
         
-        self.set_capsule_effect(game_state)
         if self.capsuleEffect:
             self.track_capsule_effect()
         actions = game_state.get_legal_actions(self.index)
+        print("Capsule: ", self.capsuleEffect, self.capsuleEffectDuration)
         
         # Get features
         features = self.get_features(game_state, "Stop");
-        #print(features)
+        print(features)
+        
+        if self.is_on_opponent_field(game_state) == False:
+            features["food_eaten"] = 0
         
         # If pacman has not eaten, is more than 5 fields from opponent or ate the capsule, it should not run
         if self.n_food_eaten(game_state) == 0  or self.capsuleEffect == True or self.is_on_opponent_field(game_state) == False:
@@ -402,16 +422,22 @@ class OffensiveReflexAgent(BaseAgent):
         food_left = len(self.get_food(game_state).as_list())
         
         # Only make this decision if we aren't already returning
-        if self.returning == False:
+        if self.returning == False and self.capsuleEffect == False:
             self.returning = random.choices([True, False], weights=[self.probability_to_return, 1-self.probability_to_return])
 
         # TODO - take opponent position in account
         if food_left <= 2 or self.probability_to_return == 1 or self.returning == True: 
             print("returning")
-            self.returning = True
-            return self.run_from_ghost(actions, game_state)
+            action = self.run_from_ghost(actions, game_state)
+            successor = game_state.generate_successor(self.index, action)
+            self.set_capsule_effect(successor)
+            return action
+
+        action = random.choice(best_actions)
+        successor = game_state.generate_successor(self.index, action)
+        self.set_capsule_effect(successor)
             
-        return random.choice(best_actions)
+        return action
     
 class DefensiveReflexAgent(BaseAgent):
     def get_features(self, game_state, action):
