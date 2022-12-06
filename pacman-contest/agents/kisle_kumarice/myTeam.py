@@ -20,6 +20,8 @@
 # John DeNero (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
 
+import numpy as np
+import math
 import random
 import contest.util as util
 import time 
@@ -62,9 +64,14 @@ class ReflexCaptureAgent(CaptureAgent):
     A base class for reflex agents that choose score-maximizing actions
     """
 
-    def __init__(self, index, time_for_computing=.1):
-        super().__init__(index, time_for_computing)
-        self.start = None
+    def __init__(self, index, time=.1):
+        super().__init__(index, time)
+        if index % 2 == 1:
+            self.is_red = False
+            self.enemy_indices = [0,2]
+        else: 
+            self.is_red = True
+            self.enemy_indices = [1,3]
 
     def register_initial_state(self, game_state):
         self.start = game_state.get_agent_position(self.index)
@@ -75,12 +82,12 @@ class ReflexCaptureAgent(CaptureAgent):
         Picks among the actions with the highest Q(s,a).
         """
         actions = game_state.get_legal_actions(self.index)
-
+        #print(actions)
         # You can profile your evaluation time by uncommenting these lines
         # start = time.time()
         values = [self.evaluate(game_state, a) for a in actions]
         # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
-
+        #print(values)
         max_value = max(values)
         best_actions = [a for a, v in zip(actions, values) if v == max_value]
 
@@ -136,6 +143,13 @@ class ReflexCaptureAgent(CaptureAgent):
         """
         return {'successor_score': 1.0}
 
+    def is_on_opponent_field(self, game_state):
+        pos = game_state.get_agent_position(self.index)
+        width = (game_state.get_red_food().width)
+        if self.is_red and pos[0] >= width/2 or self.is_red == False and pos[0] <= width/2:
+            return True
+        return False
+
 class BaseAgent(CaptureAgent):
     def __init__(self, index, time=.1):
         super().__init__(index, time)
@@ -157,7 +171,7 @@ class BaseAgent(CaptureAgent):
         actions = game_state.get_legal_actions(self.index)
 
         # You can profile your evaluation time by uncommenting these lines
-        start = time.time()
+        #start = time.time()
         values = [self.evaluate(game_state, a) for a in actions]
         #print ('eval time for agent %d: %.4f' % (self.index, time.time() - start))
 
@@ -310,7 +324,7 @@ class OffensiveReflexAgent(BaseAgent):
         position = successor.get_agent_position(self.index)
         if any(capsule_pos == position for capsule_pos in self.get_capsules(successor)):
             self.capsuleEffect = True
-            print("Ate capsule")
+            #print("Ate capsule")
             
     def track_capsule_effect(self):
         if self.capsuleEffectDuration > 0:
@@ -392,11 +406,11 @@ class OffensiveReflexAgent(BaseAgent):
         if self.capsuleEffect:
             self.track_capsule_effect()
         actions = game_state.get_legal_actions(self.index)
-        print("Capsule: ", self.capsuleEffect, self.capsuleEffectDuration)
+        #print("Capsule: ", self.capsuleEffect, self.capsuleEffectDuration)
         
         # Get features
         features = self.get_features(game_state, "Stop");
-        print(features)
+        #print(features)
         
         if self.is_on_opponent_field(game_state) == False:
             features["food_eaten"] = 0
@@ -427,7 +441,7 @@ class OffensiveReflexAgent(BaseAgent):
 
         # TODO - take opponent position in account
         if food_left <= 2 or self.probability_to_return == 1 or self.returning == True: 
-            print("returning")
+            #print("returning")
             action = self.run_from_ghost(actions, game_state)
             successor = game_state.generate_successor(self.index, action)
             self.set_capsule_effect(successor)
@@ -439,11 +453,11 @@ class OffensiveReflexAgent(BaseAgent):
             
         return action
     
-class DefensiveReflexAgent(BaseAgent):
+class DefensiveReflexAgent(ReflexCaptureAgent):
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
-
+        #print(successor)
         my_state = successor.get_agent_state(self.index)
         my_pos = my_state.get_position()
 
@@ -464,6 +478,8 @@ class DefensiveReflexAgent(BaseAgent):
             features["invader_distance"] = min([opponent_distances[i] for i in self.enemy_indices])
 
         #print(features["invader_distance"])
+        if len(invaders) == 0:
+            features['guard_border'] = self.is_by_border(game_state, my_pos)
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
@@ -471,5 +487,17 @@ class DefensiveReflexAgent(BaseAgent):
 
         return features
 
+    def is_by_border(self, game_state, my_pos):
+        #pos = game_state.get_agent_position(self.index)
+        width = (game_state.get_red_food().width)
+        wid = width/6
+        if self.is_red:
+            vrednost = 2 - math.floor(my_pos[0]/wid)
+            #print(vrednost, "bla")
+        else:
+            vrednost = math.floor(my_pos[0]/wid) - 3
+            #print(vrednost)
+        return vrednost
+
     def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
+        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2, 'guard_border': -3}
