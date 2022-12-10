@@ -27,7 +27,7 @@ import time
 
 from contest.captureAgents import CaptureAgent
 from contest.game import Directions
-from contest.util import nearestPoint, manhattanDistance
+from contest.util import nearestPoint
 
 #################
 # Team creation #
@@ -246,7 +246,6 @@ class OffensiveReflexAgent(BaseAgent):
         self.capsuleEffect = False
         self.capsuleEffectDuration = CAPSULE_EFFECT_DURATION
         self.capsule_positions = []
-        self.defensive = False
     
     def n_food_eaten(self, successor):
         '''
@@ -317,7 +316,7 @@ class OffensiveReflexAgent(BaseAgent):
         if self.capsuleEffect:
             distance_to_opponent_weight = -100
         
-        return {'successor_score': 100, 'distance_to_food': -5, "distance_to_opponent": 5, "food_eaten": 10, "distance_to_capsule": -10}
+        return {'successor_score': 100, 'distance_to_food': -1, "distance_to_opponent": distance_to_opponent_weight, "food_eaten": 100, "distance_to_capsule": -1}
 
 
     def set_capsule_effect(self, successor):
@@ -400,184 +399,58 @@ class OffensiveReflexAgent(BaseAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
-        print(self.defensive)
-        score = game_state.get_score()
-        if self.is_red:
-            if score > 0:
-                self.defensive = True
-            else:
-                self.defensive = False
-        else: 
-            if score < 0:
-                self.defensive = False
-            else:
-                self.defensive = True        
+        if len(self.capsule_positions) == 0:
+            self.capsule_positions = self.get_capsules(game_state)
         
-        if not self.defensive:
-            if len(self.capsule_positions) == 0:
-                self.capsule_positions = self.get_capsules(game_state)
-            
-            if self.capsuleEffect:
-                self.track_capsule_effect()
-            actions = game_state.get_legal_actions(self.index)
-            print("Capsule: ", self.capsuleEffect, self.capsuleEffectDuration)
-            
-            # Get features
-            features = self.get_features(game_state, "Stop");
-            #print(features)
-            
-            if self.is_on_opponent_field(game_state) == False:
-                features["food_eaten"] = 0
-            
-            # If pacman has not eaten, is more than 5 fields from opponent or ate the capsule, it should not run
-            if self.n_food_eaten(game_state) == 0  or self.capsuleEffect == True or self.is_on_opponent_field(game_state) == False:
-                self.probability_to_return = 0
-                self.returning = False
-                
-
-            # You can profile your evaluation time by uncommenting these lines
-            #start = time.time()
-            values = [self.evaluate(game_state, a) for a in actions]
-            #print ('eval time for agent %d: %.4f' % (self.index, time.time() - start))
-
-
-            self.probability_to_return = self.get_probability_to_return(features)
-            #print(self.probability_to_return, self.returning)    
+        if self.capsuleEffect:
+            self.track_capsule_effect()
+        actions = game_state.get_legal_actions(self.index)
+        #print("Capsule: ", self.capsuleEffect, self.capsuleEffectDuration)
         
-            max_value = max(values)
-            best_actions = [a for a, v in zip(actions, values) if v == max_value]
-
-            food_left = len(self.get_food(game_state).as_list())
+        # Get features
+        features = self.get_features(game_state, "Stop");
+        #print(features)
+        
+        if self.is_on_opponent_field(game_state) == False:
+            features["food_eaten"] = 0
+        
+        # If pacman has not eaten, is more than 5 fields from opponent or ate the capsule, it should not run
+        if self.n_food_eaten(game_state) == 0  or self.capsuleEffect == True or self.is_on_opponent_field(game_state) == False:
+            self.probability_to_return = 0
+            self.returning = False
             
-            # Only make this decision if we aren't already returning
-            if self.returning == False and self.capsuleEffect == False:
-                self.returning = random.choices([True, False], weights=[self.probability_to_return, 1-self.probability_to_return])
 
-            # TODO - take opponent position in account
-            if food_left <= 2 or self.probability_to_return == 1 or self.returning == True: 
-                #print("returning")
-                action = self.run_from_ghost(actions, game_state)
-                successor = game_state.generate_successor(self.index, action)
-                self.set_capsule_effect(successor)
-                return action
+        # You can profile your evaluation time by uncommenting these lines
+        #start = time.time()
+        values = [self.evaluate(game_state, a) for a in actions]
+        #print ('eval time for agent %d: %.4f' % (self.index, time.time() - start))
 
-            action = random.choice(best_actions)
+
+        self.probability_to_return = self.get_probability_to_return(features)
+        #print(self.probability_to_return, self.returning)    
+     
+        max_value = max(values)
+        best_actions = [a for a, v in zip(actions, values) if v == max_value]
+
+        food_left = len(self.get_food(game_state).as_list())
+        
+        # Only make this decision if we aren't already returning
+        if self.returning == False and self.capsuleEffect == False:
+            self.returning = random.choices([True, False], weights=[self.probability_to_return, 1-self.probability_to_return])
+
+        # TODO - take opponent position in account
+        if food_left <= 2 or self.probability_to_return == 1 or self.returning == True: 
+            #print("returning")
+            action = self.run_from_ghost(actions, game_state)
             successor = game_state.generate_successor(self.index, action)
             self.set_capsule_effect(successor)
-                
             return action
 
-        else:
-            actions = game_state.get_legal_actions(self.index)
-
-            # You can profile your evaluation time by uncommenting these lines
-            #start = time.time()
-            values = [self.evaluate_def(game_state, a) for a in actions]
-            #print ('eval time for agent %d: %.4f' % (self.index, time.time() - start))
-
-            max_value = max(values)
-            best_actions = [a for a, v in zip(actions, values) if v == max_value]
+        action = random.choice(best_actions)
+        successor = game_state.generate_successor(self.index, action)
+        self.set_capsule_effect(successor)
             
-            print(values)
-            
-            return random.choice(best_actions)
-           
-    def evaluate_def(self, game_state, action):
-        """
-        Computes a linear combination of features and feature weights
-        """
-        features = self.get_features_def(game_state, action)
-        print(features)
-        weights = self.get_weights_def(game_state, action)
-        return features * weights
-    
-    def get_features_def(self, game_state, action):
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-        #print(successor)
-        my_state = successor.get_agent_state(self.index)
-        my_pos = my_state.get_position()
-
-        # Computes whether we're on defense (1) or offense (0)
-        features['on_defense'] = 1
-        if my_state.is_pacman: features['on_defense'] = 0
-
-        # Computes distance to invaders we can see
-        enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
-        invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
-        features['num_invaders'] = len(invaders)
-        trespassers = [enemy for enemy in enemies if self.is_on_opponent_field(game_state)]
-        if len(invaders) > 0:
-            dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
-            features['invader_distance'] = min(dists)
-        else:
-            opponent_distances = successor.get_agent_distances()      
-            features["invader_distance"] = min([opponent_distances[i] for i in self.enemy_indices])
-
-        teammate_index = 0
-        if self.index == 0:
-            teammate_index = 2
-        elif self.index == 2:
-            teammate_index = 0
-        elif self.index == 1:
-            teammate_index = 3
-        else:
-            teammate_index = 1
-            
-        teammate_pos = game_state.get_agent_position(teammate_index)
-        distance_from_teammate = manhattanDistance(my_pos, teammate_pos)
-        features["distance_from_teammate"] = distance_from_teammate*2
-
-        #print(features["invader_distance"])
-        if len(invaders) == 0:
-            features['guard_border'] = self.is_by_border(game_state, my_pos)
-
-        if action == Directions.STOP: features['stop'] = 1
-        rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
-        if action == rev: features['reverse'] = 1
-        
-        food = []
-        # Stay close to food
-        if self.is_red:
-            food = game_state.get_red_food()
-        else:
-            food = game_state.get_blue_food()
-        features["average_dist_from_food"] = self.get_avg_dist_from_food(my_pos, food)
-        return features
-
-    def get_avg_dist_from_food(self, pos, food):
-        '''
-            food is a matrix of food on our side
-        '''
-        positions = []
-        distances = []
-        print(food.height, food.width)
-        for x in range(food.width):
-            for y in range(food.height):
-                if food[x][y]:
-                    distances.append(manhattanDistance((x,y), pos))
-                    positions.append((x,y))
-
-        return sum(distances) / len(distances)        
-        
-        return features
-
-    def is_by_border(self, game_state, my_pos):
-        #pos = game_state.get_agent_position(self.index)
-        width = (game_state.get_red_food().width)
-        wid = width/6
-        if self.is_red:
-            vrednost = 2 - math.floor(my_pos[0]/wid)
-            #print(vrednost, "bla")
-        else:
-            vrednost = math.floor(my_pos[0]/wid) - 3
-            #print(vrednost)
-        return vrednost
-
-    def get_weights_def(self, game_state, action):
-        return {'num_invaders': -100, 'on_defense': 100, 'invader_distance': -100, 'stop': -100, 'reverse': -2, 'guard_border': -3, "distance_from_teammate": 10, "average_dist_from_food": -45}
-
-
+        return action
     
 class DefensiveReflexAgent(ReflexCaptureAgent):
     def get_features(self, game_state, action):
@@ -610,32 +483,8 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
         if action == rev: features['reverse'] = 1
-        
-        food = []
-        # Stay close to food
-        if self.is_red:
-            food = game_state.get_red_food()
-        else:
-            food = game_state.get_blue_food()
-            
-        features["average_dist_from_food"] = self.get_avg_dist_from_food(my_pos, food)
+
         return features
-
-    def get_avg_dist_from_food(self, pos, food):
-        '''
-            food is a matrix of food on our side
-        '''
-        positions = []
-        distances = []
-        print(food.height, food.width)
-        for x in range(food.width):
-            for y in range(food.height):
-                if food[x][y]:
-                    distances.append(manhattanDistance((x,y), pos))
-                    positions.append((x,y))
-
-        return sum(distances) / len(distances)        
-        
 
     def is_by_border(self, game_state, my_pos):
         #pos = game_state.get_agent_position(self.index)
@@ -650,4 +499,4 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         return vrednost
 
     def get_weights(self, game_state, action):
-        return {'num_invaders': -100, 'on_defense': 100, 'invader_distance': -100, 'stop': -100, 'reverse': -2, 'guard_border': -3, "average_dist_from_food": -1}
+        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2, 'guard_border': -3}
