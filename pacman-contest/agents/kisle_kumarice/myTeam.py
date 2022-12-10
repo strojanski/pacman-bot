@@ -27,7 +27,7 @@ import time
 
 from contest.captureAgents import CaptureAgent
 from contest.game import Directions
-from contest.util import nearestPoint
+from contest.util import nearestPoint, manhattanDistance
 
 #################
 # Team creation #
@@ -399,6 +399,8 @@ class OffensiveReflexAgent(BaseAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
+        
+        print("HAI")
         if len(self.capsule_positions) == 0:
             self.capsule_positions = self.get_capsules(game_state)
         
@@ -410,6 +412,7 @@ class OffensiveReflexAgent(BaseAgent):
         # Get features
         features = self.get_features(game_state, "Stop");
         #print(features)
+
         
         if self.is_on_opponent_field(game_state) == False:
             features["food_eaten"] = 0
@@ -453,6 +456,12 @@ class OffensiveReflexAgent(BaseAgent):
         return action
     
 class DefensiveReflexAgent(ReflexCaptureAgent):
+
+  
+    def __init__(self, index, time=.1):
+        super().__init__(index, time)
+        self.field_to_go_to = None
+
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
@@ -463,6 +472,16 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         # Computes whether we're on defense (1) or offense (0)
         features['on_defense'] = 1
         if my_state.is_pacman: features['on_defense'] = 0
+        
+        print(self.get_game_data(game_state).agent_states[0])
+        print(self.get_game_data(game_state).agent_states[1])
+        print(self.get_game_data(game_state).agent_states[2])
+        print(self.get_game_data(game_state).agent_states[3])
+        print(".....................................................")
+        print(self.get_game_data(game_state))
+        print(self.get_field_to_go_to(successor))
+
+
 
         # Computes distance to invaders we can see
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
@@ -500,3 +519,99 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
     def get_weights(self, game_state, action):
         return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2, 'guard_border': -3}
+
+    def get_normalizing_term(self, game_state) -> float:
+        width = game_state.get_red_food().width
+        height = game_state.get_red_food().height
+        return 1 / (width * height)
+    
+    def P(self, v):
+        return .25
+    
+    def get_layout(self, game_state):
+        return game_state.data.layout
+    
+    def get_game_data(self, game_state):
+        return game_state.data
+
+    def n_fields(self, game_state) -> int:
+        width = game_state.get_red_food().width
+        height = game_state.get_red_food().height
+        n_fields = width * height - len(game_state.get_walls())
+        return n_fields
+    
+    def get_enemy_indices(self, game_state):
+        if self.is_red:
+            return game_state.get_blue_team_indices()
+        else:
+            return game_state.get_red_team_indices();
+        
+    def get_probability(self, game_state, field) -> float:
+        '''
+            Returns a probability of pacman being on field in N+k steps
+        '''
+        game_data = self.get_game_data(game_state)
+        n_fields = self.n_fields(game_state)
+        w = game_data.layout.width
+        h = game_data.layout.height
+        
+
+        #backtracks = [i for i in range(3)]
+        #distance = 7
+        #if len(enemy_distances) > 0:
+        #    distance = min(enemy_distances)
+        distance = manhattanDistance(game_state.get_agent_position(self.index), field)
+        
+        return (24 * w * h * (distance - 1)**2) / (n_fields * distance * (2 * distance**2 + 3 * distance - 1))
+        
+    def get_new_position(self, pos, move):
+        pos = [pos[0], pos[1]]
+        if move == "North":
+            pos[0] += 1
+        elif move == "South":
+            pos[0] -= 1
+        elif move == "West":
+            pos[1] -= 1
+        elif move == "East":
+            pos[1] += 1
+            
+        return (pos[0], pos[1])
+    
+    def get_fields_in_range(self, game_state, enemy_positions):
+        layout = self.get_game_data(game_state)
+        fields = []
+        for enemy in enemy_positions:
+            k = manhattanDistance(game_state.get_agent_position(self.index), enemy)
+            for i in range(k):
+                # try a path
+                moves = 0
+                field_in_range = None
+                for move in ["North", "South", "West", "East"]:
+                    new_pos = self.get_new_position(enemy, move)
+
+                    if game_state.has_wall(new_pos[0], new_pos[1]):
+                        break
+                    k += 1
+                    field_in_range = new_pos
+                    print("heh")
+                fields.append(field_in_range)
+        print("FIELDS", fields)
+        return fields
+                          
+        
+    def get_field_to_go_to(self, game_state):
+
+        enemy_indices = self.get_enemy_indices(game_state)
+        enemy_positions = [game_state.get_agent_position(i) for i in enemy_indices if game_state.get_agent_state(i).is_pacman and game_state.get_agent_position(i) is not None]
+        fields = self.get_fields_in_range(game_state, enemy_positions)
+        
+        best_field, max_prob = 0, 0
+        print("HEKKK")
+        for field in fields:
+            if field is not None:
+                field_prob = self.get_probability(game_state, field)
+                if field_prob > max_prob:
+                    max_prob = field_prob
+                    best_field = field
+                    
+        return best_field
